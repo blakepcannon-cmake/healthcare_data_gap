@@ -127,6 +127,7 @@ print(f"Columns: {df_ndc_package.columns}")
 
 # COMMAND ----------
 
+# DBTITLE 1,Cell 11
 df_nadac = (
     spark.read
     .option("header", "true")
@@ -173,21 +174,41 @@ print(f"Columns: {df_nadac.columns}")
 
 # COMMAND ----------
 
-# Load all beneficiary files and tag with source year
-# File naming convention: DE1_0_2008_Beneficiary_Summary_File_Sample_1.csv
-from pyspark.sql.functions import lit, input_file_name, regexp_extract
+# MAGIC %skip
+# MAGIC
+# MAGIC ### Modified many of thethe 3a/b/c cells to skip file reads and pull directly from catalog since connected to Databricks marketplace
+# MAGIC
+# MAGIC # Load all beneficiary files and tag with source year
+# MAGIC # File naming convention: DE1_0_2008_Beneficiary_Summary_File_Sample_1.csv
+# MAGIC from pyspark.sql.functions import lit, input_file_name, regexp_extract
+# MAGIC
+# MAGIC df_bene = (
+# MAGIC     spark.read
+# MAGIC     .option("header", "true")
+# MAGIC     .option("inferSchema", "true")
+# MAGIC     .csv(f"{volume_path}/DE1_0_*_Beneficiary_Summary_File_Sample_1.csv")
+# MAGIC     .withColumn("_source_file", input_file_name())
+# MAGIC     .withColumn(
+# MAGIC         "_source_year",
+# MAGIC         regexp_extract("_source_file", r"(\d{4})_Beneficiary", 1)
+# MAGIC     )
+# MAGIC )
+# MAGIC
+# MAGIC row_count = df_bene.count()
+# MAGIC print(f"Beneficiary Summary (all years): {row_count:,} rows")
+# MAGIC print(f"Columns: {df_bene.columns}")
+# MAGIC
+# MAGIC (
+# MAGIC     df_bene.write
+# MAGIC     .mode("overwrite")
+# MAGIC     .option("overwriteSchema", "true")
+# MAGIC     .saveAsTable("workspace.bronze.synpuf_beneficiary")
+# MAGIC )
 
-df_bene = (
-    spark.read
-    .option("header", "true")
-    .option("inferSchema", "true")
-    .csv(f"{volume_path}/DE1_0_*_Beneficiary_Summary_File_Sample_1.csv")
-    .withColumn("_source_file", input_file_name())
-    .withColumn(
-        "_source_year",
-        regexp_extract("_source_file", r"(\d{4})_Beneficiary", 1)
-    )
-)
+# COMMAND ----------
+
+# Load beneficiary summary from external table
+df_bene = spark.table("databricks_cms_synthetic_public_use_files_synpuf.cms_synpuf_ext.ben_sum")
 
 row_count = df_bene.count()
 print(f"Beneficiary Summary (all years): {row_count:,} rows")
@@ -211,12 +232,15 @@ print(f"Columns: {df_bene.columns}")
 
 # COMMAND ----------
 
-df_pde = (
-    spark.read
-    .option("header", "true")
-    .option("inferSchema", "true")
-    .csv(f"{volume_path}/DE1_0_2008_2010_Prescription_Drug_Events_Sample_1.csv")
-)
+###
+# df_pde = (
+#    spark.read
+#    .option("header", "true")
+#    .option("inferSchema", "true")
+#    .csv(f"{volume_path}/DE1_0_2008_2010_Prescription_Drug_Events_Sample_1.csv")
+#)
+df_pde = spark.table("databricks_cms_synthetic_public_use_files_synpuf.cms_synpuf_ext.rx_claims")
+
 
 row_count = df_pde.count()
 print(f"Prescription Drug Events: {row_count:,} rows")
@@ -236,12 +260,15 @@ print(f"Columns: {df_pde.columns}")
 
 # COMMAND ----------
 
-df_inpatient = (
-    spark.read
-    .option("header", "true")
-    .option("inferSchema", "true")
-    .csv(f"{volume_path}/DE1_0_2008_2010_Inpatient_Claims_Sample_1.csv")
-)
+#df_inpatient = (
+#    spark.read
+#    .option("header", "true")
+##    .option("inferSchema", "true")
+#    .csv(f"{volume_path}/DE1_0_2008_2010_Inpatient_Claims_Sample_1.csv")
+#)
+
+df_inpatient = spark.table("databricks_cms_synthetic_public_use_files_synpuf.cms_synpuf_ext.inp_claims")
+
 
 row_count = df_inpatient.count()
 print(f"Inpatient Claims: {row_count:,} rows")
@@ -261,12 +288,15 @@ print(f"Columns: {df_inpatient.columns}")
 
 # COMMAND ----------
 
-df_outpatient = (
-    spark.read
-    .option("header", "true")
-    .option("inferSchema", "true")
-    .csv(f"{volume_path}/DE1_0_2008_2010_Outpatient_Claims_Sample_1.csv")
-)
+#df_outpatient = (
+#    spark.read
+#    .option("header", "true")
+#    .option("inferSchema", "true")
+#    .csv(f"{volume_path}/DE1_0_2008_2010_Outpatient_Claims_Sample_1.csv")
+#)
+
+df_outpatient = spark.table("databricks_cms_synthetic_public_use_files_synpuf.cms_synpuf_ext.out_claims")
+
 
 row_count = df_outpatient.count()
 print(f"Outpatient Claims: {row_count:,} rows")
@@ -289,12 +319,15 @@ print(f"Columns: {df_outpatient.columns}")
 
 # COMMAND ----------
 
-df_carrier = (
-    spark.read
-    .option("header", "true")
-    .option("inferSchema", "true")
-    .csv(f"{volume_path}/DE1_0_2008_2010_Carrier_Claims_Sample_1*.csv")
-)
+#df_carrier = (
+#    spark.read
+#    .option("header", "true")
+#    .option("inferSchema", "true")
+#    .csv(f"{volume_path}/DE1_0_2008_2010_Carrier_Claims_Sample_1*.csv")
+#)
+
+df_carrier = spark.table("databricks_cms_synthetic_public_use_files_synpuf.cms_synpuf_ext.car_claims")
+
 
 row_count = df_carrier.count()
 print(f"Carrier Claims (A + B combined): {row_count:,} rows")
@@ -324,7 +357,9 @@ df_partd = (
     spark.read
     .option("header", "true")
     .option("inferSchema", "true")
-    .csv(f"{volume_path}/*part*d*spend*.csv")  # Flexible glob for various file names
+    #.csv(f"{volume_path}/*part*d*spend*.csv")  # Flexible glob for various file names #not flexible enough
+    .csv(f"{volume_path}/DSD_PTD_RY25_P04_V10_DY23_BGM.csv") 
+    
 )
 
 row_count = df_partd.count()
@@ -375,10 +410,10 @@ print(f"Columns: {df_partd.columns}")
 # MAGIC
 # MAGIC | Dataset | Source URL | Download Date | Notes |
 # MAGIC |---------|-----------|---------------|-------|
-# MAGIC | FDA NDC Product | https://open.fda.gov/data/ndc/ | _fill in_ | Tab-delimited |
-# MAGIC | FDA NDC Package | https://open.fda.gov/data/ndc/ | _fill in_ | Tab-delimited |
-# MAGIC | NADAC 2024 | https://data.medicaid.gov | _fill in_ | May need to filter to Q1 for compute |
-# MAGIC | DE-SynPUF Sample 1 | https://www.cms.gov (SynPUF page) | _fill in_ | Sample 1 of 20 |
-# MAGIC | Part D Spending | https://data.cms.gov | _fill in_ | Most recent available year |
+# MAGIC | FDA NDC Product | https://open.fda.gov/data/ndc/ | 2026-03-04 | Tab-delimited |
+# MAGIC | FDA NDC Package | https://open.fda.gov/data/ndc/ | 2026-03-04 | Tab-delimited |
+# MAGIC | NADAC 2024 | https://data.medicaid.gov | 2026-03-04 | May need to filter to Q1 for compute |
+# MAGIC | DE-SynPUF Sample 1 | https://www.cms.gov (SynPUF page) | 2026-03-04 | Sample 1 of 20 |
+# MAGIC | Part D Spending | https://data.cms.gov | 2026-03-04 | Most recent available year |
 # MAGIC
 # MAGIC **Bronze layer complete.** Proceed to Notebook 2 for NDC normalization and the drug dimension.
