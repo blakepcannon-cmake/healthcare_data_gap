@@ -207,10 +207,14 @@ print(f"Columns: {df_nadac.columns}")
 
 # COMMAND ----------
 
+from pyspark.sql.functions import col,lit
+
 # Load beneficiary summary from external table
 df_bene = spark.table("databricks_cms_synthetic_public_use_files_synpuf.cms_synpuf_ext.ben_sum")
 
 row_count = df_bene.count()
+df_bene = df_bene.withColumn("_source_year",lit("2010"))
+
 print(f"Beneficiary Summary (all years): {row_count:,} rows")
 print(f"Columns: {df_bene.columns}")
 
