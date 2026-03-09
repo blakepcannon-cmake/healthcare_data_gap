@@ -1,16 +1,16 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Notebook 4: Gold Layer Models
-# MAGIC 
+# MAGIC
 # MAGIC **Purpose:** Build business-ready analytical tables by joining silver tables across 
 # MAGIC ecosystem domains. These gold tables are what a product team would build features on.
-# MAGIC 
+# MAGIC
 # MAGIC **Gold tables:**
 # MAGIC 1. `gold.drug_cost_journey` -- end-to-end cost per drug (acquisition to reimbursement)
 # MAGIC 2. `gold.beneficiary_drug_utilization` -- patient-level Rx patterns and adherence signals
 # MAGIC 3. `gold.drug_cost_spread_analysis` -- margin analysis by drug over time
 # MAGIC 4. `gold.high_cost_drug_cohort` -- high-spend patients and their downstream utilization
-# MAGIC 
+# MAGIC
 # MAGIC Each table crosses at least two ecosystem boundaries, demonstrating the cross-domain 
 # MAGIC data fluency that Amy's team needs.
 
@@ -25,7 +25,7 @@ from pyspark.sql.functions import (
     col, count, countDistinct, sum as spark_sum, avg, min as spark_min,
     max as spark_max, when, datediff, lag, lead, row_number, desc,
     percentile_approx, year, month, round as spark_round, lit, expr,
-    first, collect_list, size, array_distinct
+    first, collect_list, size, array_distinct, coalesce
 )
 from pyspark.sql.window import Window
 
@@ -33,14 +33,14 @@ from pyspark.sql.window import Window
 
 # MAGIC %md
 # MAGIC ## 1. drug_cost_journey
-# MAGIC 
+# MAGIC
 # MAGIC **What it answers:** For a given drug, what does the pharmacy pay to acquire it (NADAC), 
 # MAGIC what does the claim say it costs (SynPUF), what does the patient pay, and what does the 
 # MAGIC payer reimburse? The spread between these numbers is where the economics of drug 
 # MAGIC distribution live.
-# MAGIC 
+# MAGIC
 # MAGIC **Ecosystem nodes joined:** Manufacturer (dim_drug) + Pharmacy (NADAC) + Payer/Patient (PDE)
-# MAGIC 
+# MAGIC
 # MAGIC **Important caveat:** The SynPUF uses synthetic NDCs, so the join to NADAC and dim_drug 
 # MAGIC will not be 1:1. This is a known limitation of the synthetic data. In production with 
 # MAGIC real claims, this join would be tight. The architecture and logic are what matter here.
@@ -76,6 +76,7 @@ print(f"Unique NDCs in PDE claims:           {fact_rx.select('ndc').distinct().c
 
 # COMMAND ----------
 
+# DBTITLE 1,Drug-Level Cost Aggregation and Join
 # Aggregate PDE to the drug level first (one row per NDC)
 rx_by_drug = (
     fact_rx
@@ -141,7 +142,7 @@ drug_cost_journey = (
     )
 )
 
-drug_cost_journey.cache()
+# Removed .cache() due to serverless compute restriction
 print(f"drug_cost_journey: {drug_cost_journey.count():,} rows")
 
 # How many have both NADAC and claims data? (the cross-domain join)
@@ -168,15 +169,20 @@ print("workspace.gold.drug_cost_journey written")
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC SELECT * FROM workspace.gold.drug_cost_journey written limit 20
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## 2. beneficiary_drug_utilization
-# MAGIC 
+# MAGIC
 # MAGIC **What it answers:** For each patient, what is their prescription pattern? 
 # MAGIC How many drugs, how consistently are they filling, what is their total spend, 
 # MAGIC and what chronic conditions do they carry?
-# MAGIC 
+# MAGIC
 # MAGIC **Ecosystem nodes joined:** Patient demographics (beneficiary) + Claims (PDE)
-# MAGIC 
+# MAGIC
 # MAGIC This table is the foundation for a medication adherence product.
 
 # COMMAND ----------
@@ -267,7 +273,9 @@ beneficiary_drug_utilization = (
 
 from pyspark.sql.functions import coalesce
 
-beneficiary_drug_utilization.cache()
+# Removed .cache() due to serverless compute restriction
+#beneficiary_drug_utilization.cache()
+
 print(f"beneficiary_drug_utilization: {beneficiary_drug_utilization.count():,} rows")
 
 # COMMAND ----------
@@ -297,13 +305,13 @@ print("workspace.gold.beneficiary_drug_utilization written")
 
 # MAGIC %md
 # MAGIC ## 3. drug_cost_spread_analysis
-# MAGIC 
+# MAGIC
 # MAGIC **What it answers:** For each drug, how has the gap between acquisition cost 
 # MAGIC and reimbursement behaved over time? Narrowing spreads = margin compression. 
 # MAGIC Volatile spreads = pricing instability worth monitoring.
-# MAGIC 
+# MAGIC
 # MAGIC **Ecosystem nodes joined:** Pharmacy acquisition (NADAC over time) + Payer (PDE claims)
-# MAGIC 
+# MAGIC
 # MAGIC This is the foundation for a drug pricing intelligence product.
 
 # COMMAND ----------
@@ -386,7 +394,9 @@ drug_cost_spread_analysis = (
     )
 )
 
-drug_cost_spread_analysis.cache()
+# remove cache
+# drug_cost_spread_analysis.cache()
+
 print(f"drug_cost_spread_analysis: {drug_cost_spread_analysis.count():,} rows")
 
 # COMMAND ----------
@@ -404,11 +414,11 @@ print("workspace.gold.drug_cost_spread_analysis written")
 
 # MAGIC %md
 # MAGIC ## 4. high_cost_drug_cohort
-# MAGIC 
+# MAGIC
 # MAGIC **What it answers:** Who are the highest-spend drug patients, and what does their 
 # MAGIC overall healthcare utilization look like? If high Rx spend correlates with lower 
 # MAGIC hospitalizations, that is evidence for a "total cost of care" data product.
-# MAGIC 
+# MAGIC
 # MAGIC **Ecosystem nodes joined:** Patient (beneficiary) + Rx claims (PDE) + 
 # MAGIC Medical claims (inpatient + outpatient)
 
@@ -480,14 +490,16 @@ high_cost_cohort = (
     )
 )
 
-high_cost_cohort.cache()
+#remove cache
+# #high_cost_cohort.cache()
+
 print(f"high_cost_drug_cohort: {high_cost_cohort.count():,} rows")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Cohort Comparison: High-Cost vs. Standard
-# MAGIC 
+# MAGIC
 # MAGIC This is the analysis that would support (or refute) a "total cost of care" product hypothesis.
 
 # COMMAND ----------
@@ -541,14 +553,14 @@ print("workspace.gold.high_cost_drug_cohort written")
 
 # MAGIC %md
 # MAGIC ## Summary
-# MAGIC 
+# MAGIC
 # MAGIC **Gold layer complete.** Four analytical tables, each crossing ecosystem boundaries:
-# MAGIC 
+# MAGIC
 # MAGIC | Table | Ecosystem Nodes Joined | Product Concept |
 # MAGIC |-------|----------------------|-----------------|
 # MAGIC | drug_cost_journey | Manufacturer + Pharmacy + Payer | Drug cost transparency tool |
 # MAGIC | beneficiary_drug_utilization | Patient + Payer (Rx) + Provider (medical) | Medication adherence monitor |
 # MAGIC | drug_cost_spread_analysis | Pharmacy (NADAC) + Payer (claims) over time | Drug pricing intelligence |
 # MAGIC | high_cost_drug_cohort | Patient + Rx + Inpatient + Outpatient | Total cost of care analytics |
-# MAGIC 
+# MAGIC
 # MAGIC **Next:** Notebook 5 runs exploratory analysis and identifies product opportunities.
