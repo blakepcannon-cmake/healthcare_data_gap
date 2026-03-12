@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Notebook 5: Exploratory Analysis & Product Opportunity Identification
-# MAGIC 
+# MAGIC
 # MAGIC **Purpose:** Run analyses that surface actionable product hypotheses from the gold-layer data.
 # MAGIC Each analysis mirrors what would happen in a product discovery session on Amy's team:
 # MAGIC start with the data, find a pattern, form a hypothesis, articulate the product concept.
-# MAGIC 
+# MAGIC
 # MAGIC **Four analyses:**
 # MAGIC 1. Generic vs. Brand Cost Spread (pharmacy margin intelligence)
 # MAGIC 2. Chronic Condition Drug Adherence Patterns (adherence monitoring product)
@@ -16,7 +16,7 @@
 
 from pyspark.sql.functions import (
     col, count, countDistinct, sum as spark_sum, avg, min as spark_min,
-    max as spark_max, when, desc, asc, spark_round, lit, percentile_approx,
+    max as spark_max, when, desc, asc, round as spark_round, lit, percentile_approx,
     stddev, coalesce, concat, expr, ntile
 )
 
@@ -29,11 +29,11 @@ def rd(c, n=2):
 # MAGIC %md
 # MAGIC ---
 # MAGIC ## Analysis 1: Generic vs. Brand Cost Spread
-# MAGIC 
+# MAGIC
 # MAGIC **Question:** Where do generic alternatives exist but the acquisition-to-reimbursement 
 # MAGIC spread is surprisingly small? These are drugs where pharmacies (and by extension, 
 # MAGIC distributors like McKesson) face margin pressure despite a generic being available.
-# MAGIC 
+# MAGIC
 # MAGIC **Product hypothesis:** A "margin optimization recommender" that alerts pharmacy 
 # MAGIC purchasing teams to therapeutically equivalent drugs with better spreads.
 
@@ -95,12 +95,12 @@ thin_margin_generics.show(25, truncate=30)
 
 # MAGIC %md
 # MAGIC ### Analysis 1 Findings
-# MAGIC 
+# MAGIC
 # MAGIC **Pattern:** _[Describe what you observe after running on real data. Look for:]_
 # MAGIC - Whether generic spreads are meaningfully different from brand spreads
 # MAGIC - Specific drug categories where generic margins are compressed
 # MAGIC - Whether high-volume generics have thinner margins than low-volume ones
-# MAGIC 
+# MAGIC
 # MAGIC **Product Concept: Margin Optimization Recommender**  
 # MAGIC A tool that monitors acquisition cost and reimbursement data for a pharmacy's formulary,
 # MAGIC flags drugs where margins are eroding, and suggests therapeutically equivalent alternatives
@@ -112,11 +112,11 @@ thin_margin_generics.show(25, truncate=30)
 # MAGIC %md
 # MAGIC ---
 # MAGIC ## Analysis 2: Chronic Condition Drug Adherence Patterns
-# MAGIC 
+# MAGIC
 # MAGIC **Question:** Do patients with certain chronic conditions show worse medication adherence 
 # MAGIC (measured by days-supply coverage ratio)? Which conditions are most associated with 
 # MAGIC therapy abandonment?
-# MAGIC 
+# MAGIC
 # MAGIC **Product hypothesis:** A medication adherence risk scoring model that identifies 
 # MAGIC patients likely to stop filling prescriptions, enabling proactive intervention.
 
@@ -213,12 +213,12 @@ low_adherence.show(truncate=False)
 
 # MAGIC %md
 # MAGIC ### Analysis 2 Findings
-# MAGIC 
+# MAGIC
 # MAGIC **Pattern:** _[Describe what you observe. Look for:]_
 # MAGIC - Which conditions have the lowest adherence
 # MAGIC - Whether higher comorbidity burden helps or hurts adherence
 # MAGIC - The size of the low-adherence cohort and their downstream medical spend
-# MAGIC 
+# MAGIC
 # MAGIC **Product Concept: Medication Adherence Risk Score**  
 # MAGIC A predictive model (built in Notebook 6) that scores patients on their likelihood 
 # MAGIC of discontinuing therapy. Inputs: chronic condition burden, fill history gaps, 
@@ -231,11 +231,11 @@ low_adherence.show(truncate=False)
 # MAGIC %md
 # MAGIC ---
 # MAGIC ## Analysis 3: Geographic Pricing Variation
-# MAGIC 
+# MAGIC
 # MAGIC **Question:** Does the acquisition cost for the same drug vary meaningfully by 
 # MAGIC pharmacy type (chain vs. independent)? Combined with beneficiary geography, 
 # MAGIC are there regional pricing pockets worth flagging?
-# MAGIC 
+# MAGIC
 # MAGIC **Product hypothesis:** A geographic pricing intelligence tool that identifies 
 # MAGIC regions where acquisition costs are above the national average.
 
@@ -265,8 +265,20 @@ pharmacy_type_comparison.show(truncate=False)
 
 # COMMAND ----------
 
+# MAGIC %skip
+# MAGIC %sql
+# MAGIC -- SELECT pharmacy_type, count(*) from silver.fact_drug_pricing group by pharmacy_type
+# MAGIC -- SELECT pharmacy_type, count(*) from bronze.fact_drug_pricing group by pharmacy_type
+# MAGIC
+# MAGIC SELECT Pharmacy_Type_Indicator,count(*) from bronze.nadac_pricing group by Pharmacy_Type_Indicator
+
+# COMMAND ----------
+
+# DBTITLE 1,Drug Pricing Pivot by Pharmacy Type
 # For drugs that appear in BOTH pharmacy types, compare prices head-to-head
-from pyspark.sql.functions import collect_set, array_contains
+from pyspark.sql.functions import collect_set, array_contains, size
+
+fact_pricing = spark.table("workspace.silver.fact_drug_pricing")
 
 # Get NDCs present in both pharmacy types
 both_types = (
@@ -274,7 +286,10 @@ both_types = (
     .filter(col("pharmacy_type").isNotNull())
     .groupBy("ndc")
     .agg(collect_set("pharmacy_type").alias("types"))
-    .filter(size(col("types")) > 1)
+    
+    # types field is "C/I"; in 2024 data - Pharmacy Type Indicator	The source of pharmacy survey data used to calculate the NADAC. 'C/I' indicates data was collected from surveys of Chain/Independent pharmacies. Other pharmacy type indicators are not used at this time. "C/I" string for all values in this table going back to bronze ingestion. removing filter
+    #.filter(size(col("types")) > 1) 
+    
     .select("ndc")
 )
 
@@ -291,34 +306,105 @@ pricing_pivot = (
 print("Pricing pivot columns:", pricing_pivot.columns)
 pricing_pivot.show(5, truncate=False)
 
+
+
 # COMMAND ----------
 
-# Beneficiary geographic distribution (for context)
+# DBTITLE 1,Beneficiary Distribution by State with ISO Codes
+# Beneficiary geographic distribution (CMS state codes to FIPS)
 dim_bene = spark.table("workspace.silver.dim_beneficiary")
+
+# Mapping from CMS codes to FIPS two-digit numeric codes (zero-padded)
+cms_code_to_fips = {
+    '01': '01', # Alabama
+    '02': '02', # Alaska
+    '03': '04', '00': '04', # Arizona (CMS 03, 00 => FIPS 04)
+    '04': '05', '89': '05', # Arkansas (CMS 04, 89 => FIPS 05)
+    '05': '06', '55': '06', '75': '06', '92': '06', # California (CMS => FIPS 06)
+    '06': '08', '91': '08', # Colorado (CMS => FIPS 08)
+    '07': '09', '81': '09', # Connecticut (CMS => FIPS 09)
+    '08': '10', # Delaware (CMS => FIPS 10)
+    '09': '11', # DC (CMS => FIPS 11)
+    '10': '12', '68': '12', '69': '12', 'A2': '12', # Florida (CMS => FIPS 12)
+    '11': '13', '85': '13', # Georgia
+    '12': '15', # Hawaii
+    '13': '16', '54': '16', # Idaho
+    '14': '17', '78': '17', # Illinois
+    '15': '18', # Indiana
+    '16': '19', '76': '19', # Iowa
+    '17': '20', '70': '20', # Kansas
+    '18': '21', 'B0': '21', # Kentucky
+    '19': '22', '71': '22', '95': '22', 'A3': '22', # Louisiana
+    '20': '23', # Maine
+    '21': '24', '80': '24', # Maryland
+    '22': '25', '82': '25', # Massachusetts
+    '23': '26', 'A4': '26', # Michigan
+    '24': '27', '77': '27', # Minnesota
+    '25': '28', 'A5': '28', # Mississippi
+    '26': '29', '79': '29', # Missouri
+    '27': '30', # Montana
+    '28': '31', # Nebraska
+    '29': '32', # Nevada
+    '30': '33', # New Hampshire
+    '31': '34', '83': '34', # New Jersey
+    '32': '35', '96': '35', # New Mexico
+    '33': '36', '57': '36', # New York
+    '34': '37', '86': '37', 'A0': '37', 'A1': '37', 'B2': '37', # North Carolina
+    '35': '38', # North Dakota
+    '36': '39', '72': '39', 'A6': '39', # Ohio
+    '37': '40', '90': '40', # Oklahoma
+    '38': '41', '93': '41', # Oregon
+    '39': '42', '73': '42', 'A7': '42', # Pennsylvania
+    '40': '72', '84': '72', # Puerto Rico
+    '41': '44', # Rhode Island
+    '42': '45', '87': '45', # South Carolina
+    '43': '46', # South Dakota
+    '44': '47', '88': '47', 'A8': '47', # Tennessee
+    '45': '48', '67': '48', '74': '48', '97': '48', 'A9': '48', # Texas
+    '46': '49', # Utah
+    '47': '50', # Vermont
+    '48': '78', # Virgin Islands (FIPS 78 for VI)
+    '49': '51', # Virginia
+    '50': '53', '94': '53', # Washington
+    '51': '54', '58': '54', 'B1': '54', # West Virginia
+    '52': '55', # Wisconsin
+    '53': '56', # Wyoming
+    '56': 'CA', # Canada (keep as 'CA' - not a US FIPS code)
+    '59': 'MX', # Mexico
+    '64': '60', # American Samoa (FIPS 60)
+    '65': '66', # Guam (FIPS 66)
+    '66': '69', # Northern Marianas Islands (FIPS 69)
+    '99': None # Foreign Countries not mapped except CA/MX
+}
+from pyspark.sql.types import StringType
+from pyspark.sql.functions import udf
+
+get_fips_code = udf(lambda code: cms_code_to_fips.get(str(code), None), StringType())
 
 state_distribution = (
     dim_bene
     .groupBy("state_code")
     .agg(
         count("*").alias("beneficiary_count"),
-        rd(avg("chronic_condition_count"), 1).alias("avg_chronic_conditions"),
+        rd(avg("chronic_condition_count"), 1).alias("avg_chronic_conditions")
     )
+    .withColumn("fips_state", get_fips_code(col("state_code")))
     .orderBy(desc("beneficiary_count"))
 )
 
-print("=== Beneficiary Distribution by State Code ===")
-state_distribution.show(20, truncate=False)
+print("=== Beneficiary Distribution by CMS State Code (FIPS-mapped) ===")
+display(state_distribution)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Analysis 3 Findings
-# MAGIC 
+# MAGIC
 # MAGIC **Pattern:** _[Describe what you observe. Look for:]_
 # MAGIC - Meaningful price differences between chain and independent pharmacies
 # MAGIC - Specific drug categories where the gap is largest
 # MAGIC - Geographic concentration of beneficiaries (useful for market sizing)
-# MAGIC 
+# MAGIC
 # MAGIC **Product Concept: Geographic Drug Pricing Intelligence**  
 # MAGIC A dashboard that overlays NADAC pricing data with geographic pharmacy data to identify
 # MAGIC regions where acquisition costs diverge from the national average. For McKesson's 
@@ -330,12 +416,14 @@ state_distribution.show(20, truncate=False)
 # MAGIC %md
 # MAGIC ---
 # MAGIC ## Analysis 4: High-Cost Drug Downstream Utilization
-# MAGIC 
+# MAGIC
 # MAGIC **Question:** Do patients who spend the most on prescriptions have lower or higher 
 # MAGIC rates of hospitalization and outpatient visits? This is the "total cost of care" question.
-# MAGIC 
+# MAGIC
 # MAGIC **Product hypothesis:** If higher Rx spend correlates with lower acute care utilization, 
 # MAGIC that supports a data product that quantifies the ROI of medication investment.
+# MAGIC
+# MAGIC **Deveil's Advocate:** Even if hypthesis is validated, is it not possible that higher prescription drug cohort patients are already correlated with higher acuity? Thus, which is the cause? Higher acuity would mean more of everything, no?
 
 # COMMAND ----------
 
@@ -393,6 +481,9 @@ investment_ratio.show(truncate=False)
 
 # COMMAND ----------
 
+# DBTITLE 1,Untitled
+from pyspark.sql.window import Window
+
 # Break high-cost cohort into quartiles to see if the relationship is linear
 high_cost_only = cohort.filter(col("spend_tier") == "high_cost_top_10pct")
 
@@ -411,21 +502,20 @@ quartile_analysis = (
     .orderBy("rx_quartile")
 )
 
-from pyspark.sql.window import Window
-
 print("=== Within High-Cost Cohort: Rx Spend Quartiles vs. Acute Utilization ===")
-quartile_analysis.show(truncate=False)
+#quartile_analysis.show(truncate=False)
+display(quartile_analysis)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Analysis 4 Findings
-# MAGIC 
+# MAGIC
 # MAGIC **Pattern:** _[Describe what you observe. The key question is:]_
 # MAGIC - Do higher Rx spenders have proportionally lower acute care utilization?
 # MAGIC - Or does high Rx spend simply correlate with sicker patients who also use more acute care?
 # MAGIC - Does adherence (days supply coverage ratio) differ between tiers?
-# MAGIC 
+# MAGIC
 # MAGIC **Product Concept: Total Cost of Care Analytics**  
 # MAGIC A product that integrates pharmaceutical and medical claims to compute total cost of care
 # MAGIC by patient cohort. For health plans, this supports formulary decisions (is it worth paying 
@@ -437,15 +527,15 @@ quartile_analysis.show(truncate=False)
 # MAGIC %md
 # MAGIC ---
 # MAGIC ## Summary: Product Opportunity Matrix
-# MAGIC 
+# MAGIC
 # MAGIC | # | Analysis | Pattern | Product Concept | McKesson Value |
 # MAGIC |---|----------|---------|-----------------|----------------|
 # MAGIC | 1 | Generic vs. Brand Spread | Margin compression in specific drug categories | Margin Optimization Recommender | Value-add for pharmacy customers |
 # MAGIC | 2 | Chronic Condition Adherence | Condition-specific adherence gaps | Adherence Risk Scoring | Strengthens pharmacy relationships |
 # MAGIC | 3 | Geographic Pricing | Regional acquisition cost variance | Pricing Intelligence Dashboard | Distribution strategy input |
 # MAGIC | 4 | High-Cost Downstream Utilization | Rx spend vs. acute care correlation | Total Cost of Care Analytics | Positions McKesson data in VBC models |
-# MAGIC 
+# MAGIC
 # MAGIC Each of these could be taken through Amy's ideate-incubate-pilot cycle.
 # MAGIC The gold-layer data foundation built in Notebook 4 supports all four.
-# MAGIC 
+# MAGIC
 # MAGIC **Next:** Notebook 6 builds two lightweight ML models as proof-of-concept extensions.
